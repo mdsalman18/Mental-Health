@@ -1,0 +1,15 @@
+<nav>
+    <ul class="nav-links" id="navLinks">
+        <li><a href="{% url 'home' %}">Home</a></li>
+        <li><a href="{% url 'mental_health' %}">What is Mental Health</a></li>
+        
+        {% if user.is_authenticated and not user.is_staff %}
+            <!-- Show "Logout" only if user is authenticated and not an admin -->
+            <li><a href="{% url 'logout' %}">Logout</a></li>
+        {% else %}
+            <!-- Show "Login" and "Signup" if user is not authenticated -->
+            <li><a href="{% url 'login' %}">Login</a></li>
+            <li><a href="{% url 'signup' %}">Signup</a></li>
+        {% endif %}
+    </ul>
+</nav>

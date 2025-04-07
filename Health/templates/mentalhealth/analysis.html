@@ -1,0 +1,311 @@
+{% extends 'mentalhealth/base.html' %}
+
+{% block content %}
+<br><br><br><br><br>
+<div class="container">
+    <div class="assessment-container">
+        <h1>Mental Health Assessment</h1>
+        <p class="description">
+            Please allow camera and microphone access. We'll analyze your facial expressions 
+            and voice patterns to assess your mental wellbeing.
+        </p>
+        
+        <form id="assessmentForm" method="post" action="{% url 'process_assessment' %}">
+            {% csrf_token %}
+            <input type="hidden" id="userId" name="user_id" value="{{ request.user.id }}">
+            
+            <div class="capture-section">
+                <div class="video-container">
+                    <h2>Facial Analysis</h2>
+                    <video id="videoFeed" class="video-feed" autoplay playsinline></video>
+                    <canvas id="analysisCanvas" style="display: none;"></canvas>
+                    <input type="hidden" id="imageData" name="image_data">
+                </div>
+                
+                <div class="voice-section">
+                    <h2>Voice Analysis</h2>
+                    <div class="reading-prompt" id="readingPrompt">
+                        {{ prompt_text }}
+                    </div>
+                    <div class="voice-indicator">
+                        <i class="fas fa-microphone"></i>
+                        <div class="voice-visualizer">
+                            <div id="voiceLevel" class="voice-level"></div>
+                        </div>
+                    </div>
+                    <div class="recording-indicator" id="recordingIndicator" style="display: none;">
+                        <i class="fas fa-circle" style="color: #c62828; margin-right: 5px;"></i>
+                        Recording audio - please read the text above
+                    </div>
+                    <input type="hidden" id="audioData" name="audio_data">
+                    <input type="hidden" id="promptText" name="prompt_text" value="{{ prompt_text }}">
+                </div>                
+            </div>
+            
+            <div class="controls">
+                <button type="button" id="analyzeBtn" class="btn-primary">Analyze Now</button>
+                <button type="button" id="newPromptBtn" class="btn-secondary">New Text</button>
+            </div>
+        </form>
+        <div id="resultContainer"></div>
+    </div>
+</div>
+<br><br>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Media capture variables
+    let mediaStream = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let audioContext = null;
+    let analyser = null;
+    let isRecording = false;
+    let dataArray = null;
+    let scriptProcessor = null;
+
+    // DOM elements
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const videoFeed = document.getElementById('videoFeed');
+    const voiceLevel = document.getElementById('voiceLevel');
+    const recordingIndicator = document.getElementById('recordingIndicator');
+    const resultContainer = document.getElementById('resultContainer');
+    const readingPrompt = document.getElementById('readingPrompt');
+    const promptText = document.getElementById('promptText');
+    const assessmentForm = document.getElementById('assessmentForm');
+    const newPromptBtn = document.getElementById('newPromptBtn');
+
+    // Simple reading prompts
+    const prompts = [
+        "I love to read books every day.",
+        "The dog runs fast in the park.",
+        "She enjoys playing games with friends.",
+        "It is raining outside and cold today.",
+        "I like to eat pizza on weekends.",
+        "The birds are singing in the tree."
+    ];
+
+    // Set random prompt
+    function setRandomPrompt() {
+        const randomIndex = Math.floor(Math.random() * prompts.length);
+        const newPrompt = prompts[randomIndex];
+        readingPrompt.textContent = newPrompt;
+        promptText.value = newPrompt;
+    }
+
+    // New prompt button handler
+    newPromptBtn.addEventListener('click', setRandomPrompt);
+
+    // Start media capture
+    async function startCapture() {
+        try {
+            // Request camera and microphone access
+            mediaStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: 'user',
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                }, 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
+
+            videoFeed.srcObject = mediaStream;
+
+            // Set up audio context and analyser for real-time voice visualization
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 64; // Set the size of the frequency bin
+            const source = audioContext.createMediaStreamSource(mediaStream);
+            source.connect(analyser);
+            
+            // Create script processor for better visualization
+            scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+            analyser.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
+            
+            dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+            scriptProcessor.onaudioprocess = function() {
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                let maxLevel = 0;
+
+                for (let i = 0; i < dataArray.length; i++) {
+                    sum += dataArray[i];
+                    if (dataArray[i] > maxLevel) {
+                        maxLevel = dataArray[i]; // Track the max level for fluctuation
+                    }
+                }
+
+                const average = sum / dataArray.length;
+                const volumeHeight = Math.min(100, maxLevel * 0.8); // Adjust this multiplier for more or less fluctuation
+
+                // Update the voice visualizer with dynamic fluctuation
+                voiceLevel.style.width = `${volumeHeight}%`;
+                
+                // Update color based on volume level (green for low, red for high)
+                const color = `hsl(${(volumeHeight * 1.2) % 360}, 100%, 50%)`; // Color shifts as volume increases
+                voiceLevel.style.backgroundColor = color;
+            };
+
+            // Set up the prompt for the user
+            setRandomPrompt();
+
+        } catch (error) {
+            console.error("Media access error:", error);
+            alert("Could not access media devices. Please ensure permissions are granted.");
+        }
+    }
+
+    // Stop all media streams and clean up
+    function stopAllMedia() {
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(track => track.stop());
+        }
+        if (scriptProcessor) {
+            scriptProcessor.disconnect();
+        }
+        if (analyser) {
+            analyser.disconnect();
+        }
+        if (audioContext && audioContext.state !== 'closed') {
+            audioContext.close();
+        }
+    }
+
+    // Capture and submit data
+    async function captureAndSubmitData() {
+        if (isRecording) return;
+        isRecording = true;
+
+        try {
+            recordingIndicator.style.display = 'block';
+            analyzeBtn.disabled = true;
+            resultContainer.innerHTML = ''; // Clear previous result before starting a new analysis
+
+            // Capture video frame
+            const analysisCanvas = document.getElementById('analysisCanvas');
+            const analysisCtx = analysisCanvas.getContext('2d');
+            analysisCanvas.width = videoFeed.videoWidth;
+            analysisCanvas.height = videoFeed.videoHeight;
+            analysisCtx.drawImage(videoFeed, 0, 0, analysisCanvas.width, analysisCanvas.height);
+            const imageData = analysisCanvas.toDataURL('image/jpeg', 0.8);
+
+            // Capture audio
+            mediaRecorder = new MediaRecorder(mediaStream);
+            audioChunks = [];
+
+            const recordingPromise = new Promise((resolve) => {
+                mediaRecorder.ondataavailable = e => {
+                    if (e.data.size > 0) {
+                        audioChunks.push(e.data);
+                    }
+                };
+
+                mediaRecorder.onstop = () => {
+                    resolve();
+                };
+            });
+
+            mediaRecorder.start();
+            
+            // Record for 5 seconds
+            setTimeout(() => {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+            }, 5000);
+
+            await recordingPromise;
+
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const audioReader = new FileReader();
+            
+            audioReader.onload = function() {
+                const formData = new FormData();
+                formData.append('csrfmiddlewaretoken', getCookie('csrftoken'));
+                formData.append('user_id', document.getElementById('userId').value);
+                formData.append('image_data', imageData);
+                formData.append('audio_data', audioReader.result);
+                formData.append('prompt_text', promptText.value);
+
+                fetch(assessmentForm.action, {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Analysis complete:", data);
+
+                    // Display the result from the backend on the screen
+                    resultContainer.innerHTML = `
+                        <h2>Mental Health Status</h2>
+                        <p><strong>Status:</strong> ${data.mental_health_status}</p>
+                        <p><strong>Image Emotion:</strong> ${data.image_emotion}</p>
+                        <p><strong>Audio Mood:</strong> ${data.audio_mood}</p>
+                        <p><strong>Image Confidence:</strong> ${(data.image_confidence * 100).toFixed(2)}%</p>
+                        <p><strong>Audio Confidence:</strong> ${(data.audio_confidence * 100).toFixed(2)}%</p>
+                    `;
+                    resultContainer.style.display = 'block';
+
+                    alert("Analysis submitted successfully!");
+                })
+                .catch(error => {
+                    console.error("Analysis error:", error);
+                    alert("Analysis failed. Please try again. Error: " + error.message);
+                })
+                .finally(() => {
+                    recordingIndicator.style.display = 'none';
+                    analyzeBtn.disabled = false;
+                    isRecording = false;
+                });
+            };
+
+            audioReader.readAsDataURL(audioBlob);
+
+        } catch (error) {
+            console.error("Capture error:", error);
+            alert("Error during capture. Please try again. Error: " + error.message);
+            recordingIndicator.style.display = 'none';
+            analyzeBtn.disabled = false;
+            isRecording = false;
+        }
+    }
+
+    // Get cookie by name
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // Event listener for the Analyze Now button
+    analyzeBtn.addEventListener('click', captureAndSubmitData);
+
+    // Clean up when leaving the page
+    window.addEventListener('beforeunload', stopAllMedia);
+
+    // Automatically start media capture when the page is loaded
+    startCapture();
+});
+
+</script>
+{% endblock %}

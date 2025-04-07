@@ -1,0 +1,35 @@
+{% extends 'mentalhealth/base.html' %}
+
+{% block content %}
+<section id="auth"><br><br><br><br>
+    <div class="container">
+        <div class="auth-container">
+            <div class="auth-form active" id="loginForm">
+                <h2>Login to Your Account</h2>
+                <form method="post" action="{% url 'login' %}">
+                    {% csrf_token %}
+                    <div class="form-group">
+                        <label for="loginEmail">Username/Email ID</label>
+                        <input type="text" id="loginEmail" name="username" placeholder="Enter your username or email" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="loginPassword">Password</label>
+                        <input type="password" id="loginPassword" name="password" placeholder="Enter your password" required>
+                    </div>
+                    <button type="submit" class="auth-button">Login</button>
+                </form>
+                <div class="auth-toggle">
+                    <p>Don't have an account? <a href="{% url 'signup' %}">Sign up here</a></p>
+                </div>
+                {% if messages %}
+                <div class="alert-messages">
+                    {% for message in messages %}
+                        <p>{{ message }}</p>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
